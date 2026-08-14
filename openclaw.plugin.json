@@ -1,0 +1,31 @@
+{
+  "id": "english-learning",
+  "name": "English Learning",
+  "description": "Lộ trình tiếng Anh cá nhân hóa, luyện nội dung, mini-game và tiến độ tách biệt theo Telegram ID.",
+  "version": "1.3.0",
+  "activation": {
+    "onStartup": true
+  },
+  "contracts": {
+    "tools": [
+      "learning_setup_plan",
+      "learning_get_today",
+      "learning_submit_result",
+      "learning_log_game_result",
+      "learning_get_progress",
+      "learning_set_notifications"
+    ]
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "databaseUrlEnv": {
+        "type": "string"
+      },
+      "publicAgentId": {
+        "type": "string"
+      }
+    }
+  }
+}
