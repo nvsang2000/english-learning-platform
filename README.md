@@ -12,6 +12,7 @@ Nền tảng lưu lộ trình học tiếng Anh theo từng Telegram ID và gử
 - Menu Telegram `/hoc`: các nút tạo/đổi lộ trình, bài hôm nay, nhập nội dung luyện tập, mini-game, tiến độ và phát âm; callback không chứa Telegram ID.
 - TTS Microsoft: tự tạo voice message khi phản hồi có nội dung tiếng Anh dành cho người học; chỉ đọc phần tiếng Anh, mặc định giọng Mỹ.
 - Scheduler: nhắc bài chính lúc 07:00 và tùy chọn micro-learning mỗi 30 phút trong khung 07:30–22:00 giờ Việt Nam; không gửi ban đêm.
+- Antigravity gateway: chuyển Antigravity CLI thành endpoint OpenAI-compatible nội bộ, có hỗ trợ `tool_calls` để plugin vẫn lưu được lộ trình và điểm.
 
 Các cổng dịch vụ chỉ bind vào `127.0.0.1`: PostgreSQL `55432`, AMQP `5673`, RabbitMQ Management `15673`.
 
@@ -43,6 +44,70 @@ Trong `/hoc`, người học có thể chọn:
 Mỗi game diễn ra từng vòng để chờ người học trả lời, chấm theo thang 100 và lưu kết quả/XP vào `progress_events`. Phần lời dẫn dùng giọng trẻ trung, có tiết chế; kiến thức và giải thích lỗi vẫn dùng tiếng Việt chuẩn.
 
 Sau khi cập nhật mã nguồn, chạy `npm run build` rồi `npm run seed` để đồng bộ ba khóa học mới vào PostgreSQL trước khi nạp lại plugin OpenClaw.
+
+## Dùng một tài khoản Antigravity cho OpenClaw
+
+Gateway gọi `agy` headless cho từng request. OpenClaw giữ lịch sử hội thoại; gateway không tái sử dụng conversation ID của Antigravity giữa các Telegram user, tránh lẫn dữ liệu. Gateway chỉ bind loopback, yêu cầu Bearer token, mặc định xử lý tuần tự và chạy Antigravity ở `plan + sandbox`.
+
+### 1. Đăng nhập và kiểm tra Antigravity
+
+Chạy dưới đúng user vận hành OpenClaw:
+
+```bash
+agy
+agy models
+```
+
+Đăng nhập Google OAuth trong `agy`, chọn/trust workspace riêng `/home/nvsang/.openclaw/state/antigravity-english-workspace`, sau đó thoát CLI. Không sao chép refresh token vào repo.
+
+### 2. Cấu hình gateway
+
+Sao chép `.env.antigravity.example` thành `.env.antigravity`, tạo token dài bằng `openssl rand -hex 32`, rồi đặt cùng token đó vào môi trường của OpenClaw Gateway với tên `ANTIGRAVITY_GATEWAY_TOKEN`.
+
+```bash
+npm run build
+systemctl --user link /home/nvsang/english-learning-platform/systemd/english-learning-antigravity-gateway.service
+systemctl --user enable --now english-learning-antigravity-gateway.service
+curl -sS http://127.0.0.1:18101/health
+```
+
+### 3. Khai báo provider trong OpenClaw
+
+```bash
+openclaw config set models.providers.antigravity-local '{
+  "baseUrl":"http://127.0.0.1:18101/v1",
+  "api":"openai-completions",
+  "models":[{
+    "id":"antigravity-default",
+    "name":"Antigravity (local account)",
+    "reasoning":true,
+    "input":["text"],
+    "contextWindow":200000,
+    "contextTokens":100000,
+    "maxTokens":8192,
+    "compat":{"supportsTools":true,"requiresStringContent":true}
+  }]
+}' --strict-json --merge
+
+openclaw config set models.providers.antigravity-local.apiKey \
+  --ref-provider default --ref-source env --ref-id ANTIGRAVITY_GATEWAY_TOKEN
+
+openclaw config validate
+openclaw models --agent public-english set antigravity-local/antigravity-default
+openclaw gateway restart
+```
+
+Nếu model mặc định không phù hợp, chạy `agy models` rồi đặt tên hiển thị chính xác vào `ANTIGRAVITY_MODEL` và restart service. Không đặt token trực tiếp trong lệnh hoặc commit `.env.antigravity`.
+
+Để triển khai đúng layout hiện tại trên máy này sau khi đã review thay đổi:
+
+```bash
+bash scripts/deploy-antigravity-live.sh \
+  /database/server/micorservice/english-learning-platform \
+  /home/nvsang/english-learning-platform
+```
+
+Script tạo backup trước khi đồng bộ, sinh secret với quyền `0600`, seed curriculum, bật gateway, cấu hình duy nhất agent `public-english`, kiểm tra cấu hình rồi restart OpenClaw.
 
 ## Quyền riêng tư và an toàn
 

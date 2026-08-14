@@ -1,0 +1,23 @@
+[Unit]
+Description=English Learning Antigravity OpenAI-Compatible Gateway
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/nvsang/english-learning-platform
+EnvironmentFile=/home/nvsang/english-learning-platform/.env.antigravity
+Environment=PATH=/home/nvsang/.local/bin:/home/nvsang/.nvm/versions/node/v24.18.0/bin:/home/nvsang/.npm-global/bin:/usr/local/bin:/usr/bin:/bin
+ExecStartPre=/usr/bin/mkdir -p /home/nvsang/.openclaw/state/antigravity-english-workspace
+ExecStart=/home/nvsang/.nvm/versions/node/v24.18.0/bin/node /home/nvsang/english-learning-platform/dist/antigravity-gateway.js
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/nvsang/.gemini /home/nvsang/.openclaw/state/antigravity-english-workspace
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=default.target

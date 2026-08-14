@@ -1,6 +1,6 @@
 {
   "name": "openclaw-english-learning",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "private": true,
   "type": "module",
   "files": [
@@ -12,6 +12,8 @@
     "build": "tsc -p tsconfig.json",
     "check": "tsc -p tsconfig.json --noEmit",
     "test": "npm run build && node --test tests/*.test.mjs",
+    "antigravity-gateway": "node dist/antigravity-gateway.js",
+    "smoke:antigravity": "npm run build && node scripts/smoke-antigravity-gateway.mjs",
     "seed": "node dist/seed.js",
     "worker": "node dist/worker.js"
   },

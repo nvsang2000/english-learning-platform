@@ -3,4 +3,5 @@ dist/
 .env
 .env.openclaw
 .env.worker
+.env.antigravity
 *.log

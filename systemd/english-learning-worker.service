@@ -8,6 +8,7 @@ Type=simple
 WorkingDirectory=/home/nvsang/english-learning-platform
 EnvironmentFile=/home/nvsang/english-learning-platform/.env.worker
 Environment=PATH=/home/nvsang/.nvm/versions/node/v24.18.0/bin:/home/nvsang/.npm-global/bin:/usr/local/bin:/usr/bin:/bin
+ExecStartPre=/usr/bin/mkdir -p /home/nvsang/.openclaw/media/english-learning-worker
 ExecStart=/home/nvsang/.nvm/versions/node/v24.18.0/bin/node /home/nvsang/english-learning-platform/dist/worker.js
 Restart=on-failure
 RestartSec=5
@@ -15,7 +16,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths=/home/nvsang/english-learning-platform /home/nvsang/.openclaw/state
+ReadWritePaths=/home/nvsang/english-learning-platform /home/nvsang/.openclaw/state /home/nvsang/.openclaw/media/english-learning-worker
 
 [Install]
 WantedBy=default.target

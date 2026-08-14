@@ -2,6 +2,7 @@ import amqp, { type Channel, type ChannelModel, type ConsumeMessage } from "amqp
 import { execFile } from "node:child_process";
 import { mkdir, unlink } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
+import { homedir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { EdgeTTS } from "node-edge-tts";
@@ -27,7 +28,8 @@ const openclawBin = process.env.OPENCLAW_BIN ?? "openclaw";
 const schedulerInterval = Math.max(10_000, Number(process.env.LEARNING_SCHEDULER_INTERVAL_MS ?? 30_000));
 const queueName = "english.daily-lessons.v1";
 const exchangeName = "english.notifications.v1";
-const audioDir = path.join(process.cwd(), "tmp-audio");
+const openclawStateDirectory = process.env.OPENCLAW_STATE_DIR ?? path.join(homedir(), ".openclaw");
+const audioDir = path.join(openclawStateDirectory, "media", "english-learning-worker");
 
 const db = databasePool(databaseUrl);
 let connection: ChannelModel | undefined;
