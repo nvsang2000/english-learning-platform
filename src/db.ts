@@ -1,5 +1,6 @@
 import { Pool, type PoolClient } from "pg";
 import { buildLessonContent, courseBySlug, startingWeek, type CourseSlug } from "./curriculum.js";
+import { addressForGender, isLearnerGender, type LearnerGender } from "./persona.js";
 
 export type SetupPlanInput = {
   goal: CourseSlug;
@@ -110,6 +111,42 @@ export async function upsertLearner(db: Pool, telegramId: string): Promise<any> 
     [telegramId]
   );
   return result.rows[0];
+}
+
+export async function getLearnerProfile(db: Pool, telegramId: string): Promise<{
+  gender: LearnerGender;
+  address: ReturnType<typeof addressForGender>;
+  genderSelected: boolean;
+}> {
+  const learner = await upsertLearner(db, telegramId);
+  const gender: LearnerGender = isLearnerGender(learner.gender_identity) ? learner.gender_identity : "neutral";
+  return {
+    gender,
+    address: addressForGender(gender),
+    genderSelected: Boolean(learner.gender_selected_at)
+  };
+}
+
+export async function setLearnerGender(db: Pool, telegramId: string, gender: LearnerGender): Promise<{
+  gender: LearnerGender;
+  address: ReturnType<typeof addressForGender>;
+}> {
+  if (!isLearnerGender(gender)) throw new Error("Lựa chọn cách xưng hô không hợp lệ.");
+  const result = await db.query(
+    `INSERT INTO learners (channel, external_user_id, gender_identity, gender_selected_at)
+     VALUES ('telegram', $1, $2, now())
+     ON CONFLICT (channel, external_user_id) DO UPDATE SET
+       gender_identity = EXCLUDED.gender_identity,
+       gender_selected_at = now(),
+       last_seen_at = now(),
+       updated_at = now()
+     RETURNING gender_identity`,
+    [telegramId, gender]
+  );
+  const savedGender: LearnerGender = isLearnerGender(result.rows[0]?.gender_identity)
+    ? result.rows[0].gender_identity
+    : gender;
+  return { gender: savedGender, address: addressForGender(savedGender) };
 }
 
 export async function setupPlan(db: Pool, telegramId: string, input: SetupPlanInput): Promise<any> {

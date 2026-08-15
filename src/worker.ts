@@ -1,19 +1,22 @@
 import amqp, { type Channel, type ChannelModel, type ConsumeMessage } from "amqplib";
 import { execFile } from "node:child_process";
-import { mkdir, unlink } from "node:fs/promises";
-import { randomUUID } from "node:crypto";
+import { mkdir, rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
-import { EdgeTTS } from "node-edge-tts";
+import { deliberateSpeechSegments, synthesizeLearningAudio, vocabularyAudioFileName } from "./audio.js";
 import { databasePool, ensureTodayLesson } from "./db.js";
+import { addressForGender, capitalizeAddress, morningCheckIn } from "./persona.js";
 import {
   currentMicroSlot,
   DAILY_REMINDER_MINUTES,
   isNotificationDeliveryWindow,
+  isWeeklySummaryWindow,
   VIETNAM_TIMEZONE,
-  vietnamNow
+  vietnamNow,
+  vietnamWeekRange
 } from "./schedule.js";
+import { preferredVocabularyCategories, weeklyVocabularySummaryText } from "./vocabulary.js";
 
 const execFileAsync = promisify(execFile);
 function requireEnv(name: string): string {
@@ -36,39 +39,33 @@ let connection: ChannelModel | undefined;
 let channel: Channel | undefined;
 let stopping = false;
 
-function notificationText(lesson: any): string {
+function notificationText(lesson: any, gender: unknown, seed: string): string {
+  const address = addressForGender(gender);
   const objectives = Array.isArray(lesson.objectives) ? lesson.objectives.slice(0, 2) : [];
   return [
-    "🔔 Tới giờ vào mode tiếng Anh rồi!",
+    morningCheckIn(gender, seed),
     "",
-    `📘 ${lesson.title_vi}`,
+    `📘 Bài của ${address} hôm nay: ${lesson.title_vi}`,
     `⏱ ${lesson.daily_minutes} phút`,
     ...objectives.map((item: string) => `• ${item}`),
     "",
-    "Nhắn “Học bài hôm nay” để bắt đầu. Mình đi từng bước, học chill mà vẫn level up nhé."
+    `Nhắn “Học bài hôm nay” để bắt đầu. Bé 3 sẽ đi cùng ${address} từng bước, học chill mà vẫn level up nhé.`
   ].join("\n");
 }
 
-function stableIndex(value: string, modulo: number): number {
-  let hash = 2166136261;
-  for (const char of value) {
-    hash ^= char.charCodeAt(0);
-    hash = Math.imul(hash, 16777619);
-  }
-  return (hash >>> 0) % Math.max(1, modulo);
-}
-
-function microText(item: any, slot: string): string {
+function microText(item: any, slot: string, gender: unknown): string {
+  const address = addressForGender(gender);
   return [
     `🌱 Micro-learning · ${slot}`,
     "",
     `🔤 ${item.english_text}`,
+    `🗣 IPA (Mỹ): ${item.phonetic_text}`,
     `🇻🇳 ${item.vietnamese_meaning}`,
     "",
     `Ví dụ: ${item.example_en}`,
     `Nghĩa: ${item.example_vi}`,
     "",
-    "🔊 Nghe audio, nhắc lại 3 lần, rồi tự đặt một câu mới."
+    `🔊 ${capitalizeAddress(address)} nghe audio, nhắc lại 3 lần rồi tự đặt một câu mới nha. Bé 3 chờ câu của ${address}!`
   ].join("\n");
 }
 
@@ -76,7 +73,7 @@ async function createDailyLessonOutbox(now = new Date()): Promise<number> {
   const local = vietnamNow(now);
   if (local.totalMinutes < DAILY_REMINDER_MINUTES || local.totalMinutes >= DAILY_REMINDER_MINUTES + 30) return 0;
   const due = await db.query(
-    `SELECT l.id, l.external_user_id
+    `SELECT l.id, l.external_user_id, l.gender_identity
        FROM learners l
       WHERE l.notification_enabled = true`
   );
@@ -84,9 +81,10 @@ async function createDailyLessonOutbox(now = new Date()): Promise<number> {
   for (const row of due.rows) {
     try {
       const lesson = await ensureTodayLesson(db, row.external_user_id);
+      const greeting = morningCheckIn(row.gender_identity, `${local.date}:${row.external_user_id}`);
       const text = lesson
-        ? notificationText(lesson)
-        : "🔔 Đã đến giờ học tiếng Anh lúc 07:00.\n\nBạn chưa có lộ trình. Hãy nhắn /hoc để chọn mục tiêu và tạo bài học cá nhân hôm nay.";
+        ? notificationText(lesson, row.gender_identity, `${local.date}:${row.external_user_id}`)
+        : `${greeting}\n\nBé 3 chưa thấy lộ trình của ${addressForGender(row.gender_identity)}. Nhắn /hoc để chọn mục tiêu và tạo bài học cá nhân hôm nay nhé.`;
       const result = await db.query(
         `INSERT INTO notification_outbox
            (learner_id, lesson_id, notification_date, notification_type, payload)
@@ -108,35 +106,128 @@ async function createMicroLearningOutbox(now = new Date()): Promise<number> {
   const slot = currentMicroSlot(now);
   if (!slot) return 0;
   const notificationType = `micro_${slot.replace(":", "")}`;
-  const [learnersResult, itemsResult] = await Promise.all([
-    db.query(
-      `SELECT l.id, l.external_user_id
-         FROM learners l
-        WHERE l.micro_learning_enabled = true`
-    ),
-    db.query(
-      `SELECT item_key, english_text, vietnamese_meaning, example_en, example_vi
-         FROM micro_learning_items WHERE active = true ORDER BY id`
-    )
-  ]);
-  if (itemsResult.rows.length === 0) return 0;
+  const learnersResult = await db.query(
+    `SELECT l.id, l.external_user_id, l.gender_identity, active.course_slug
+       FROM learners l
+       LEFT JOIN LATERAL (
+         SELECT e.course_slug FROM enrollments e
+          WHERE e.learner_id = l.id AND e.status = 'active' LIMIT 1
+       ) active ON true
+      WHERE l.micro_learning_enabled = true`
+  );
   let created = 0;
   for (const learner of learnersResult.rows) {
-    const item = itemsResult.rows[stableIndex(`${local.date}:${slot}:${learner.external_user_id}`, itemsResult.rows.length)];
+    const client = await db.connect();
+    try {
+      await client.query("BEGIN");
+      const existing = await client.query(
+        `SELECT id FROM notification_outbox
+          WHERE learner_id = $1 AND notification_date = $2::date AND notification_type = $3`,
+        [learner.id, local.date, notificationType]
+      );
+      if (existing.rowCount) {
+        await client.query("COMMIT");
+        continue;
+      }
+
+      const preferredCategories = preferredVocabularyCategories(learner.course_slug);
+      const itemResult = await client.query(
+        `SELECT i.id, i.item_key, i.english_text, i.phonetic_text, i.vietnamese_meaning,
+                i.example_en, i.example_vi, i.category
+           FROM micro_learning_items i
+          WHERE i.active = true
+            AND NOT EXISTS (
+              SELECT 1 FROM learner_vocabulary_history h
+               WHERE h.learner_id = $1 AND h.item_id = i.id
+            )
+          ORDER BY COALESCE(array_position($2::text[], i.category), 999),
+                   md5(i.item_key || $1::text)
+          LIMIT 1
+          FOR UPDATE OF i SKIP LOCKED`,
+        [learner.id, preferredCategories]
+      );
+      const item = itemResult.rows[0];
+      if (!item) {
+        await client.query("COMMIT");
+        continue;
+      }
+
+      const payload = {
+        text: microText(item, slot, learner.gender_identity),
+        speechText: `${item.english_text}. ${item.example_en}`,
+        speechSegments: [item.english_text, item.example_en],
+        audioFileName: vocabularyAudioFileName(item.english_text),
+        vocabularyItemId: item.id,
+        vocabularyItemKey: item.item_key,
+        vocabularyCategory: item.category,
+        slot,
+        timezone: VIETNAM_TIMEZONE
+      };
+      const outboxResult = await client.query(
+        `INSERT INTO notification_outbox
+           (learner_id, notification_date, notification_type, payload)
+         VALUES ($1, $2::date, $3, $4::jsonb)
+         RETURNING id`,
+        [learner.id, local.date, notificationType, JSON.stringify(payload)]
+      );
+      await client.query(
+        `INSERT INTO learner_vocabulary_history (learner_id, item_id, outbox_id)
+         VALUES ($1, $2, $3)`,
+        [learner.id, item.id, outboxResult.rows[0].id]
+      );
+      await client.query("COMMIT");
+      created += 1;
+    } catch (error: any) {
+      await client.query("ROLLBACK").catch(() => undefined);
+      if (error?.code !== "23505") throw error;
+    } finally {
+      client.release();
+    }
+  }
+  return created;
+}
+
+async function createWeeklyVocabularySummaryOutbox(now = new Date()): Promise<number> {
+  const local = vietnamNow(now);
+  if (!isWeeklySummaryWindow(now, local.date)) return 0;
+  const range = vietnamWeekRange(now);
+  const learnersResult = await db.query(
+    `SELECT id, gender_identity FROM learners
+      WHERE micro_learning_enabled = true`
+  );
+  let created = 0;
+  for (const learner of learnersResult.rows) {
+    const itemsResult = await db.query(
+      `SELECT i.english_text, i.phonetic_text, i.vietnamese_meaning, i.category
+         FROM learner_vocabulary_history h
+         JOIN micro_learning_items i ON i.id = h.item_id
+        WHERE h.learner_id = $1
+          AND h.delivered_at >= ($2::date::timestamp AT TIME ZONE $4)
+          AND h.delivered_at < (($3::date + 1)::timestamp AT TIME ZONE $4)
+        ORDER BY h.delivered_at, i.id`,
+      [learner.id, range.start, range.end, VIETNAM_TIMEZONE]
+    );
+    if (itemsResult.rows.length === 0) continue;
     const result = await db.query(
       `INSERT INTO notification_outbox
          (learner_id, notification_date, notification_type, payload)
-       VALUES ($1, $2::date, $3, $4::jsonb)
+       VALUES ($1, $2::date, 'weekly_vocabulary', $3::jsonb)
        ON CONFLICT (learner_id, notification_date, notification_type) DO NOTHING
        RETURNING id`,
       [
         learner.id,
         local.date,
-        notificationType,
         JSON.stringify({
-          text: microText(item, slot),
-          speechText: `${item.english_text}. ${item.example_en}`,
-          slot,
+          text: weeklyVocabularySummaryText(
+            itemsResult.rows,
+            range.start,
+            range.end,
+            3400,
+            addressForGender(learner.gender_identity)
+          ),
+          weekStart: range.start,
+          weekEnd: range.end,
+          vocabularyCount: itemsResult.rows.length,
           timezone: VIETNAM_TIMEZONE
         })
       ]
@@ -204,33 +295,51 @@ async function deliver(message: ConsumeMessage): Promise<void> {
     await db.query("UPDATE notification_outbox SET status = 'sending', attempts = attempts + 1, updated_at = now() WHERE id = $1", [outboxId]);
     const text = String(record.payload?.text ?? "").slice(0, 3500);
     if (!text) throw new Error("Nội dung thông báo rỗng");
-    let audioPath: string | undefined;
+    let audioWorkDir: string | undefined;
     try {
       const speechText = String(record.payload?.speechText ?? "").trim().slice(0, 800);
+      const speechSegments = deliberateSpeechSegments(
+        Array.isArray(record.payload?.speechSegments)
+          ? record.payload.speechSegments.map((item: unknown) => String(item)).slice(0, 12)
+          : speechText
+      );
       const args = ["message", "send", "--channel", "telegram", "--target", record.external_user_id, "--message", text];
-      if (speechText) {
-        await mkdir(audioDir, { recursive: true });
-        audioPath = path.join(audioDir, `${outboxId}-${randomUUID()}.mp3`);
-        const tts = new EdgeTTS({
-          voice: "en-US-JennyNeural",
-          lang: "en-US",
-          outputFormat: "audio-24khz-48kbitrate-mono-mp3",
-          rate: "-5%",
-          pitch: "+0%",
-          timeout: 30_000
-        });
-        await tts.ttsPromise(speechText, audioPath);
+      if (speechSegments.length > 0) {
+        audioWorkDir = path.join(audioDir, outboxId);
+        await mkdir(audioWorkDir, { recursive: true });
+        const requestedFileName = String(record.payload?.audioFileName ?? speechSegments[0]);
+        const audioPath = path.join(audioWorkDir, vocabularyAudioFileName(requestedFileName.replace(/\.mp3$/i, "")));
+        await synthesizeLearningAudio(speechSegments, audioPath);
         args.push("--media", audioPath);
       }
       args.push("--json");
       await execFileAsync(openclawBin, args, { timeout: 90_000, maxBuffer: 1024 * 1024 });
     } finally {
-      if (audioPath) await unlink(audioPath).catch(() => undefined);
+      if (audioWorkDir) await rm(audioWorkDir, { recursive: true, force: true }).catch(() => undefined);
     }
-    await db.query(
-      "UPDATE notification_outbox SET status = 'sent', sent_at = now(), last_error = NULL, updated_at = now() WHERE id = $1",
-      [outboxId]
-    );
+    const client = await db.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query(
+        "UPDATE notification_outbox SET status = 'sent', sent_at = now(), last_error = NULL, updated_at = now() WHERE id = $1",
+        [outboxId]
+      );
+      const vocabularyItemId = String(record.payload?.vocabularyItemId ?? "");
+      if (/^\d+$/.test(vocabularyItemId)) {
+        await client.query(
+          `UPDATE learner_vocabulary_history
+              SET delivered_at = COALESCE(delivered_at, now())
+            WHERE learner_id = $1 AND item_id = $2::bigint`,
+          [record.learner_id, vocabularyItemId]
+        );
+      }
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
     channel.ack(message);
   } catch (error) {
     const errorText = (error instanceof Error ? error.message : String(error)).slice(0, 1000);
@@ -254,9 +363,10 @@ async function schedulerTick(): Promise<void> {
   try {
     const dailyCreated = await createDailyLessonOutbox();
     const microCreated = await createMicroLearningOutbox();
+    const weeklyCreated = await createWeeklyVocabularySummaryOutbox();
     const relayed = await relayOutbox();
-    if (dailyCreated || microCreated || relayed) {
-      console.log(`Scheduler: bài chính=${dailyCreated}, micro=${microCreated}, đưa vào hàng đợi=${relayed}`);
+    if (dailyCreated || microCreated || weeklyCreated || relayed) {
+      console.log(`Scheduler: bài chính=${dailyCreated}, micro=${microCreated}, tổng kết tuần=${weeklyCreated}, đưa vào hàng đợi=${relayed}`);
     }
   } catch (error) {
     console.error("Lỗi scheduler:", error);

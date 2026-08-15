@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { logGameResult, normalizeTelegramId } from "../dist/db.js";
+import { logGameResult, normalizeTelegramId, setLearnerGender } from "../dist/db.js";
 
 test("Telegram identity normalization accepts only trusted numeric ids", () => {
   assert.equal(normalizeTelegramId("telegram:123456789"), "123456789");
@@ -43,4 +43,21 @@ test("game results are sanitized and stored against the active enrollment", asyn
     note: "Great round",
     xpEarned: 36
   });
+});
+
+test("selected gender is stored against the Telegram learner", async () => {
+  const calls = [];
+  const db = {
+    async query(sql, params) {
+      calls.push({ sql, params });
+      return { rows: [{ gender_identity: params[1] }] };
+    }
+  };
+
+  assert.deepEqual(await setLearnerGender(db, "123456789", "female"), {
+    gender: "female",
+    address: "chị"
+  });
+  assert.deepEqual(calls[0].params, ["123456789", "female"]);
+  await assert.rejects(() => setLearnerGender(db, "123456789", "unknown"), /không hợp lệ/);
 });

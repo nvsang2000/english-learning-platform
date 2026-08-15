@@ -1,8 +1,10 @@
 import { randomBytes } from "node:crypto";
 import { lstat, readFile, rename, chmod, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
 import path from "node:path";
 
 const targetRoot = path.resolve(process.argv[2] || process.cwd());
+const serviceHome = homedir();
 const gatewayEnvPath = path.join(targetRoot, ".env.antigravity");
 const openclawEnvPath = path.join(targetRoot, ".env.openclaw");
 
@@ -47,8 +49,8 @@ const gatewayEnv = [
   `ANTIGRAVITY_GATEWAY_TOKEN=${token}`,
   "ANTIGRAVITY_GATEWAY_BIND=127.0.0.1",
   "ANTIGRAVITY_GATEWAY_PORT=18101",
-  "ANTIGRAVITY_BIN=/home/nvsang/.local/bin/agy",
-  "ANTIGRAVITY_WORKDIR=/home/nvsang/.openclaw/state/antigravity-english-workspace",
+  `ANTIGRAVITY_BIN=${path.join(serviceHome, ".local", "bin", "agy")}`,
+  `ANTIGRAVITY_WORKDIR=${path.join(serviceHome, ".openclaw", "state", "antigravity-english-workspace")}`,
   "ANTIGRAVITY_MODEL=gemini-3.7-flash-low",
   "ANTIGRAVITY_MODEL_ID=antigravity-default",
   "ANTIGRAVITY_MAX_CONCURRENCY=1",

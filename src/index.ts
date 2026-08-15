@@ -1,22 +1,30 @@
 import { Type } from "typebox";
 import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
-import { EdgeTTS } from "node-edge-tts";
-import { mkdir, unlink } from "node:fs/promises";
+import { mkdir, rm } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import path from "node:path";
 import {
+  EXERCISE_PAUSE_SECONDS,
+  extractExerciseAudioText,
+  stripExerciseAudioDirectives,
+  synthesizeLearningAudio
+} from "./audio.js";
+import {
   databasePool,
   ensureTodayLesson,
+  getLearnerProfile,
   getProgress,
   lessonForPrompt,
   logGameResult,
   normalizeTelegramId,
+  setLearnerGender,
   setNotifications,
   setupPlan,
   submitTodayResult,
   upsertLearner
 } from "./db.js";
+import { capitalizeAddress, isLearnerGender, type LearnerAddress } from "./persona.js";
 
 const TOOL_NAMES = [
   "learning_setup_plan",
@@ -27,14 +35,6 @@ const TOOL_NAMES = [
   "learning_set_notifications"
 ];
 
-const vietnameseMarks = /[ăâđêôơưàáạảãằắặẳẵầấậẩẫèéẹẻẽềếệểễìíịỉĩòóọỏõồốộổỗờớợởỡùúụủũừứựửữỳýỵỷỹ]/iu;
-const englishCommonWords = new Set([
-  "a", "an", "and", "are", "as", "at", "be", "been", "but", "by", "can", "could", "day", "did", "do", "does",
-  "for", "from", "good", "great", "had", "has", "have", "he", "hello", "her", "here", "him", "his", "how", "i",
-  "if", "in", "is", "it", "let", "make", "me", "morning", "my", "not", "of", "on", "or", "our", "please", "say",
-  "she", "should", "so", "that", "the", "their", "them", "there", "they", "this", "to", "today", "us", "was", "we",
-  "were", "what", "when", "where", "which", "who", "will", "with", "would", "you", "your"
-]);
 const recentAudioRuns = new Map<string, number>();
 
 function cleanupRecentAudioRuns(now = Date.now()): void {
@@ -43,69 +43,27 @@ function cleanupRecentAudioRuns(now = Date.now()): void {
   }
 }
 
-function looksEnglish(value: string): boolean {
-  const clean = value.replace(/https?:\/\/\S+/g, " ").replace(/[*_`#>()[\]{}]/g, " ").trim();
-  if (!/[A-Za-z]/.test(clean) || vietnameseMarks.test(clean)) return false;
-  const words = clean.toLowerCase().match(/[a-z]+(?:'[a-z]+)?/g) ?? [];
-  if (words.length === 0) return false;
-  if (words.length === 1) return clean.length <= 40 && /^[A-Za-z]+(?:[-'][A-Za-z]+)*[.!?]?$/.test(clean);
-  const commonCount = words.filter((word) => englishCommonWords.has(word)).length;
-  return commonCount >= 1 || /\b(?:ing|ed|ly|tion|ment|ness|able|ous)\b/i.test(clean) || /[.!?]$/.test(clean);
-}
-
 export function extractEnglishForAudio(text: string): string | null {
-  const candidates: string[] = [];
-  const explicitBlocks = [...text.matchAll(/\[\[tts:text\]\]([\s\S]*?)\[\[\/tts:text\]\]/gi)].map((match) => match[1].trim());
-  candidates.push(...explicitBlocks);
-  const inlineDirectives = [...text.matchAll(/\[\[tts:([^\]\n]{1,1000})\]\]/gi)].map((match) => match[1].trim());
-  candidates.push(...inlineDirectives);
-  const withoutDirectives = stripTtsDirectives(text);
-  for (const match of withoutDirectives.matchAll(/["“”']([^"“”'\n]{2,300})["“”']/g)) {
-    if (looksEnglish(match[1])) candidates.push(match[1].trim());
-  }
-  for (const rawLine of withoutDirectives.split(/\n+/)) {
-    const line = rawLine
-      .replace(/^\s*(?:[-*•]|\d+[.)]|[🔤🗣️🔊📘])\s*/, "")
-      .replace(/^\s*(?:English|Ví dụ|Example)\s*:\s*/i, "")
-      .trim();
-    if (looksEnglish(line)) candidates.push(line);
-  }
-  const unique = [...new Set(candidates.map((item) => item
-    .replace(/^["“”']+|["“”']+$/g, "")
-    .replace(/\s+/g, " ")
-    .trim()).filter(Boolean))];
-  if (unique.length === 0) return null;
-  return unique.join(" ").slice(0, 1000);
+  return extractExerciseAudioText(text);
 }
 
 function stripTtsDirectives(text: string): string {
-  return text
-    .replace(/\[\[tts:text\]\]([\s\S]*?)\[\[\/tts:text\]\]/gi, "$1")
-    .replace(/\n?\s*\[\[tts:[^\]\n]{1,1000}\]\]\s*/gi, "\n")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
+  return stripExerciseAudioDirectives(text);
 }
 
 async function synthesizeEnglish(text: string): Promise<string> {
   const stateDirectory = process.env.OPENCLAW_STATE_DIR ?? path.join(homedir(), ".openclaw");
   const directory = path.join(stateDirectory, "media", "english-auto-audio");
-  await mkdir(directory, { recursive: true });
-  const audioPath = path.join(directory, `${randomUUID()}.mp3`);
-  const tts = new EdgeTTS({
-    voice: "en-US-JennyNeural",
-    lang: "en-US",
-    outputFormat: "audio-24khz-48kbitrate-mono-mp3",
-    rate: "-5%",
-    pitch: "+0%",
-    timeout: 30_000
-  });
+  const requestDirectory = path.join(directory, randomUUID());
+  await mkdir(requestDirectory, { recursive: true });
+  const audioPath = path.join(requestDirectory, "bai-tap-doc-theo.mp3");
   try {
-    await tts.ttsPromise(text, audioPath);
-    const timer = setTimeout(() => void unlink(audioPath).catch(() => undefined), 10 * 60_000);
+    await synthesizeLearningAudio(text, audioPath, { pauseSeconds: EXERCISE_PAUSE_SECONDS });
+    const timer = setTimeout(() => void rm(requestDirectory, { recursive: true, force: true }).catch(() => undefined), 10 * 60_000);
     timer.unref();
     return audioPath;
   } catch (error) {
-    await unlink(audioPath).catch(() => undefined);
+    await rm(requestDirectory, { recursive: true, force: true }).catch(() => undefined);
     throw error;
   }
 }
@@ -123,9 +81,9 @@ function trustedTelegramIdFromContext(ctx: {
   return match ? normalizeTelegramId(match[1]) : null;
 }
 
-function menuReply() {
+function menuReply(address: LearnerAddress = "bạn") {
   return {
-    text: "Alo bạn học ơi 👋 Hôm nay mình vào mode nào?",
+    text: `Alo ${address} học ơi 👋 Bé 3 có mặt! Hôm nay ${address} muốn vào mode nào?`,
     presentation: {
       title: "English Learning Hub",
       tone: "info" as const,
@@ -159,18 +117,22 @@ function menuReply() {
 
 function startReply() {
   return {
-    text: "Welcome bạn học mới 👋 Chọn hướng học để mình lên lộ trình riêng cho bạn nhé!",
+    text: "Chào bạn 👋 Em là Bé 3, cô bạn đồng hành học tiếng Anh dễ thương và hơi bị vui tính. Trước tiên, bạn chọn cách Bé 3 xưng hô nhé:",
     presentation: {
-      title: "Bắt đầu hành trình tiếng Anh",
+      title: "Bé 3 nên gọi bạn là gì?",
       tone: "info" as const,
       blocks: [
         {
           type: "buttons" as const,
           buttons: [
             {
-              label: "💬 Tiếng Anh giao tiếp",
-              action: { type: "callback" as const, value: "englearn:direction:communication" },
+              label: "👨 Gọi là anh",
+              action: { type: "callback" as const, value: "englearn:gender:male" },
               style: "primary" as const
+            },
+            {
+              label: "👩 Gọi là chị",
+              action: { type: "callback" as const, value: "englearn:gender:female" }
             }
           ]
         },
@@ -178,12 +140,12 @@ function startReply() {
           type: "buttons" as const,
           buttons: [
             {
-              label: "🏆 Tiếng Anh ôn thi",
-              action: { type: "callback" as const, value: "englearn:direction:exam" }
+              label: "🙂 Gọi là bạn",
+              action: { type: "callback" as const, value: "englearn:gender:neutral" }
             }
           ]
         },
-        { type: "context" as const, text: "Giao tiếp và ôn thi dùng curriculum tách biệt. Bạn có thể đổi lộ trình sau trong /hoc." }
+        { type: "context" as const, text: "Bé 3 chỉ dùng lựa chọn này để xưng hô cho đúng và không tự đoán từ tên hay giọng nói. Gõ /start để đổi bất cứ lúc nào." }
       ]
     }
   };
@@ -450,7 +412,13 @@ export default definePluginEntry({
       requireAuth: false,
       handler: async (ctx) => {
         if (ctx.channelId !== "telegram" || ctx.agentId !== publicAgentId) return { text: "Menu này chỉ dùng trên Telegram." };
-        return menuReply();
+        try {
+          const telegramId = normalizeTelegramId(ctx.senderId);
+          const profile = await getLearnerProfile(getDb(), telegramId);
+          return menuReply(profile.address);
+        } catch {
+          return menuReply();
+        }
       }
     });
 
@@ -479,13 +447,44 @@ export default definePluginEntry({
           roleplay_quest: "Bắt đầu game Role-play Quest gồm 5 lượt trong một tình huống thực tế phù hợp lộ trình của tôi. Hãy nhập vai, để tôi trả lời bằng tiếng Anh, phản hồi diễn biến và chấm độ phù hợp sau từng lượt."
         };
 
+        let telegramId: string | null = null;
+        try {
+          telegramId = normalizeTelegramId(ctx.senderId);
+        } catch {
+          // Callback cũ hoặc không có sender ID: giữ cách gọi trung tính và không ghi dữ liệu.
+        }
+
+        const parts = payload.split(":");
+        if (parts[0] === "gender" && isLearnerGender(parts[1])) {
+          if (!telegramId) {
+            await ctx.respond.reply({ text: "Bé 3 chưa xác định được tài khoản Telegram. Bạn gửi lại /start giúp em nhé." });
+            return { handled: true };
+          }
+          const profile = await setLearnerGender(getDb(), telegramId, parts[1]);
+          await ctx.respond.editMessage({
+            text: `Bé 3 nhớ rồi nha ${profile.address} 💛 Từ giờ em sẽ gọi ${profile.address} cho đúng. ${capitalizeAddress(profile.address)} muốn bắt đầu theo hướng nào?`,
+            buttons: directionButtons()
+          });
+          return { handled: true };
+        }
+
+        let address: LearnerAddress = "bạn";
+        if (telegramId) {
+          try {
+            address = (await getLearnerProfile(getDb(), telegramId)).address;
+          } catch (error) {
+            api.logger.warn(`Không thể nạp cách xưng hô: ${error instanceof Error ? error.message : "unknown"}`);
+          }
+        }
+        const Address = capitalizeAddress(address);
+
         if (payload === "menu") {
-          await ctx.respond.editMessage({ text: "Học gì hôm nay để level up đây? 👇", buttons: mainMenuButtons() });
+          await ctx.respond.editMessage({ text: `${Address} muốn học gì hôm nay để level up cùng Bé 3 đây? 👇`, buttons: mainMenuButtons() });
           return { handled: true };
         }
         if (payload === "plan") {
           await ctx.respond.editMessage({
-            text: "Bước 1/5 — Bạn muốn học theo hướng nào? Mỗi hướng có lộ trình riêng nhé 👇",
+            text: `Bước 1/5 — ${Address} muốn học theo hướng nào? Bé 3 sẽ lên lộ trình riêng nhé 👇`,
             buttons: directionButtons()
           });
           return { handled: true };
@@ -494,25 +493,24 @@ export default definePluginEntry({
         if (payload === "progress") return { handled: true, submitText: "Hãy cho tôi xem tiến độ học tập hiện tại." };
         if (payload === "audio") return { handled: true, submitText: "Tôi muốn luyện phát âm bằng audio. Hãy hỏi tôi từ hoặc câu tiếng Anh cần nghe." };
         if (payload === "practice") {
-          await ctx.respond.editMessage({ text: "Bạn muốn tự tay luyện kiểu nào? Chọn một option nhé ✍️", buttons: practiceButtons() });
+          await ctx.respond.editMessage({ text: `${Address} muốn luyện kiểu nào? Chọn một option rồi Bé 3 vào bài cùng ${address} nhé ✍️`, buttons: practiceButtons() });
           return { handled: true };
         }
         if (payload === "games") {
-          await ctx.respond.editMessage({ text: "Chọn game rồi mình combat tiếng Anh nhẹ nhàng thôi 🎮", buttons: gameButtons() });
+          await ctx.respond.editMessage({ text: `Chọn game rồi ${address} và Bé 3 combat tiếng Anh nhẹ nhàng thôi 🎮`, buttons: gameButtons() });
           return { handled: true };
         }
 
-        const parts = payload.split(":");
         if (parts[0] === "direction" && parts[1] === "communication") {
           await ctx.respond.editMessage({
-            text: "Bước 2/5 — Chọn lộ trình giao tiếp hợp vibe của bạn:",
+            text: `Bước 2/5 — ${Address} chọn lộ trình giao tiếp hợp vibe nhé:`,
             buttons: communicationCourseButtons()
           });
           return { handled: true };
         }
         if (parts[0] === "direction" && parts[1] === "exam") {
           await ctx.respond.editMessage({
-            text: "Bước 2/5 — Bạn đang muốn chinh phục chứng chỉ nào?",
+            text: `Bước 2/5 — ${Address} đang muốn chinh phục chứng chỉ nào?`,
             buttons: examCourseButtons()
           });
           return { handled: true };
@@ -527,16 +525,16 @@ export default definePluginEntry({
           };
         }
         if (parts[0] === "goal" && validGoals.has(parts[1])) {
-          await ctx.respond.editMessage({ text: "Bước 3/5 — Trình độ hiện tại của bạn là gì?", buttons: levelButtons(parts[1]) });
+          await ctx.respond.editMessage({ text: `Bước 3/5 — Trình độ hiện tại của ${address} là gì?`, buttons: levelButtons(parts[1]) });
           return { handled: true };
         }
         if (parts[0] === "level" && validGoals.has(parts[1]) && validLevels.has(parts[2])) {
-          await ctx.respond.editMessage({ text: "Bước 4/5 — Mỗi ngày bạn có thể học bao lâu?", buttons: minuteButtons(parts[1], parts[2]) });
+          await ctx.respond.editMessage({ text: `Bước 4/5 — Mỗi ngày ${address} có thể học bao lâu?`, buttons: minuteButtons(parts[1], parts[2]) });
           return { handled: true };
         }
         if (parts[0] === "minutes" && validGoals.has(parts[1]) && validLevels.has(parts[2]) && validMinutes.has(parts[3])) {
           await ctx.respond.editMessage({
-            text: "Bước 5/5 — Bài chính luôn nhắc lúc 07:00 giờ Việt Nam. Bạn có muốn nhận thêm một từ/câu mỗi 30 phút từ 07:30 đến 22:00 không?",
+            text: `Bước 5/5 — Bé 3 luôn nhắc bài chính lúc 07:00 giờ Việt Nam. ${Address} có muốn nhận thêm một từ/câu mỗi 30 phút từ 07:30 đến 22:00 không?`,
             buttons: microLearningButtons(parts[1], parts[2], parts[3])
           });
           return { handled: true };
@@ -545,14 +543,14 @@ export default definePluginEntry({
           parts[0] === "micro" && validGoals.has(parts[1]) && validLevels.has(parts[2]) &&
           validMinutes.has(parts[3]) && new Set(["on", "off"]).has(parts[4])
         ) {
-          await ctx.respond.editMessage({ text: "Đã nhận lựa chọn. Em đang tạo lộ trình cá nhân cho bạn…" });
+          await ctx.respond.editMessage({ text: `Bé 3 nhận đủ rồi ✨ Em đang tạo lộ trình riêng cho ${address}…` });
           return {
             handled: true,
             submitText: `Tôi chọn lộ trình ${parts[1]}, trình độ hiện tại ${parts[2]}, học ${parts[3]} phút mỗi ngày. Tạo lộ trình, nhắc bài chính lúc 07:00 giờ Việt Nam và ${parts[4] === "on" ? "bật" : "tắt"} micro-learning 30 phút/lần trong khung 07:30–22:00.`
           };
         }
 
-        await ctx.respond.editMessage({ text: "Option này đã hết hạn hoặc không hợp lệ. Về hub chọn lại nhé:", buttons: mainMenuButtons() });
+        await ctx.respond.editMessage({ text: `Nút này đã hết hạn mất rồi ${address} ơi. Bé 3 đưa ${address} về hub chọn lại nhé:`, buttons: mainMenuButtons() });
         return { handled: true };
       }
     });
@@ -564,7 +562,13 @@ export default definePluginEntry({
         return { handled: true, reply: startReply() };
       }
       if (["menu", "mở menu", "lựa chọn", "tùy chọn"].includes(text)) {
-        return { handled: true, reply: menuReply() };
+        try {
+          const telegramId = normalizeTelegramId(ctx.senderId);
+          const profile = await getLearnerProfile(getDb(), telegramId);
+          return { handled: true, reply: menuReply(profile.address) };
+        } catch {
+          return { handled: true, reply: menuReply() };
+        }
       }
     });
 
@@ -579,7 +583,10 @@ export default definePluginEntry({
       const dedupeKey = event.runId ?? ctx.runId ?? `${sessionKey ?? ctx.conversationId ?? "telegram"}:${visibleText.slice(0, 120)}`;
       if (recentAudioRuns.has(dedupeKey)) return;
       const englishText = extractEnglishForAudio(visibleText);
-      if (!englishText) return;
+      if (!englishText) {
+        if (cleanVisibleText !== visibleText) return { payload: { ...event.payload, text: cleanVisibleText } };
+        return;
+      }
       try {
         const mediaUrl = await synthesizeEnglish(englishText);
         recentAudioRuns.set(dedupeKey, Date.now());
@@ -589,13 +596,12 @@ export default definePluginEntry({
             text: cleanVisibleText,
             mediaUrl,
             mediaUrls: [mediaUrl],
-            audioAsVoice: true,
-            spokenText: englishText,
-            ttsSupplement: { spokenText: englishText, visibleTextAlreadyDelivered: false }
+            audioAsVoice: false
           }
         };
       } catch (error) {
         api.logger.warn(`Không thể tự tạo audio tiếng Anh: ${error instanceof Error ? error.message : "unknown"}`);
+        return { payload: { ...event.payload, text: cleanVisibleText } };
       }
     });
 
@@ -612,20 +618,27 @@ export default definePluginEntry({
     api.on("before_prompt_build", async (_event, ctx) => {
       if (ctx.agentId !== publicAgentId || ctx.messageProvider !== "telegram" || !ctx.senderId) return;
       const vietnamesePolicy = [
+        "DANH TÍNH BẮT BUỘC: Tên của em là Bé 3. Luôn tự xưng là 'em' hoặc 'Bé 3'; không tự xưng là 'tôi' hay dùng 'mình' để chỉ riêng em.",
         "QUY TẮC NGÔN NGỮ BẮT BUỘC: Luôn giải thích, hướng dẫn, nhận xét và hỏi người học bằng tiếng Việt.",
         "Chỉ dùng tiếng Anh cho câu mẫu, từ/cụm từ, đoạn đọc, câu hỏi luyện tập và phần người học cần thực hành; kèm giải thích tiếng Việt khi cần.",
-        "PHONG CÁCH: Thân thiện, trẻ trung và khích lệ. Có thể dùng vừa phải các cụm Gen Z dễ hiểu như 'vào mode', 'level up', 'chill', 'flex nhẹ', 'quá slay'; tối đa 1–2 cụm mỗi lượt, không lạm dụng, không châm chọc và không dùng slang trong phần giải thích học thuật cần chính xác.",
+        "TÍNH CÁCH BÉ 3: Dễ thương, ấm áp, hài hước nhẹ nhàng như một cô bạn đồng hành học tập. Khen cụ thể, động viên tự nhiên và thay đổi cách diễn đạt để không lặp câu khuôn mẫu. Có thể dùng vừa phải các cụm Gen Z dễ hiểu như 'vào mode', 'level up', 'chill', 'flex nhẹ', 'quá slay'; tối đa 1–2 cụm mỗi lượt, không châm chọc và không dùng slang trong phần giải thích học thuật.",
+        "GIỚI HẠN: Dễ thương nhưng không tán tỉnh, không lãng mạn hóa quan hệ và không dùng lời gợi dục; người học có thể là người chưa thành niên.",
         "LUYỆN TƯƠNG TÁC: Với bài điền hoặc game, luôn đưa từng câu/từng vòng và chờ người học trả lời; không tự trả lời thay. Sau mỗi vòng báo điểm ngắn gọn. Khi game kết thúc hoặc người học dừng, gọi learning_log_game_result đúng một lần.",
         "Không tiết lộ dữ liệu, điểm số hoặc lộ trình của bất kỳ Telegram ID nào khác.",
-        "AUDIO TỰ ĐỘNG: Hệ thống sẽ tự phát hiện và đọc phần tiếng Anh. Hãy đặt câu/từ tiếng Anh cần luyện trên dòng riêng hoặc trong dấu ngoặc kép. Cuối phản hồi, thêm đúng khối [[tts:text]]nội dung tiếng Anh cần đọc[[/tts:text]]; tuyệt đối không dùng dạng sai [[tts:nội dung]]. Không gọi công cụ tts cho phản hồi thông thường."
+        "AUDIO BÀI TẬP: Chỉ tạo audio cho đúng câu tiếng Anh mà người học cần nghe, đọc theo hoặc điền chỗ trống; không tạo audio cho đáp án chuẩn, lời khen, phần giải thích hay câu tiếng Anh chỉ dùng để đối chiếu.",
+        "Câu cần audio phải xuất hiện bình thường đúng một lần trong nội dung nhìn thấy. Cuối phản hồi, chép lại chính xác câu đó trong khối ẩn [[tts:text]]...[[/tts:text]]. Có thể đặt nhiều câu trong cùng một khối, mỗi câu trên một dòng. Không dùng dạng sai [[tts:nội dung]].",
+        "Với bài điền chỗ trống, giữ nguyên ______ và gợi ý trong ngoặc bên trong khối TTS, ví dụ [[tts:text]]Yesterday, we ________ (go) home.[[/tts:text]]; hệ thống sẽ bỏ phần gợi ý, nghỉ 3 giây tại chỗ trống rồi đọc tiếp.",
+        "Không gọi công cụ tts cho phản hồi thông thường. File luyện đọc do hệ thống tự đính kèm dưới dạng MP3, không phải Telegram voice."
       ].join("\n");
       try {
         const telegramId = normalizeTelegramId(ctx.senderId);
+        const profile = await getLearnerProfile(getDb(), telegramId);
         const lesson = await ensureTodayLesson(getDb(), telegramId);
+        const addressPolicy = `CÁCH XƯNG HÔ ĐÃ ĐƯỢC NGƯỜI HỌC CHỌN: Luôn gọi người đang chat là '${profile.address}'. Không gọi họ bằng cách xưng hô khác và không tự suy đoán giới tính từ tên, ảnh hay giọng nói. Nếu họ muốn đổi, hướng dẫn gửi /start.`;
         const dynamicContext = lesson
           ? `DỮ LIỆU HỌC TẬP ĐÁNG TIN CẬY CỦA NGƯỜI ĐANG CHAT (không hiển thị JSON thô):\n${JSON.stringify(lessonForPrompt(lesson))}\nHãy bám bài hôm nay, cho làm từng phần và dùng learning_submit_result khi đã có kết quả.`
           : "Người học chưa có lộ trình. Trước tiên cho chọn một trong hai hướng: (1) tiếng Anh giao tiếp gồm nền tảng/giao tiếp đời thường/đi làm/du lịch; (2) tiếng Anh ôn thi gồm B1/B2/TOEIC/IELTS. Sau đó hỏi khóa học cụ thể, trình độ hiện tại, số phút mỗi ngày, mục tiêu điểm/ngày thi nếu có và gọi learning_setup_plan. Mỗi khóa học dùng curriculum riêng; không trộn chủ đề giữa các khóa. Người học vẫn có thể chơi game hoặc gửi nội dung luyện tập mà chưa cần tạo lộ trình.";
-        return { appendSystemContext: vietnamesePolicy, prependContext: dynamicContext };
+        return { appendSystemContext: `${vietnamesePolicy}\n${addressPolicy}`, prependContext: dynamicContext };
       } catch (error) {
         api.logger.warn(`Không thể nạp dữ liệu bài học: ${error instanceof Error ? error.message : "unknown"}`);
         return {

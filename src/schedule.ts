@@ -2,12 +2,14 @@ export const VIETNAM_TIMEZONE = "Asia/Ho_Chi_Minh";
 export const DAILY_REMINDER_MINUTES = 7 * 60;
 export const MICRO_START_MINUTES = 7 * 60 + 30;
 export const QUIET_START_MINUTES = 22 * 60 + 30;
+export const WEEKLY_SUMMARY_START_MINUTES = 22 * 60 + 15;
 
 export type VietnamLocalTime = {
   date: string;
   hour: number;
   minute: number;
   totalMinutes: number;
+  isoWeekday: number;
 };
 
 export function vietnamNow(now = new Date()): VietnamLocalTime {
@@ -23,7 +25,27 @@ export function vietnamNow(now = new Date()): VietnamLocalTime {
   const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
   const hour = Number(values.hour);
   const minute = Number(values.minute);
-  return { date: `${values.year}-${values.month}-${values.day}`, hour, minute, totalMinutes: hour * 60 + minute };
+  const date = `${values.year}-${values.month}-${values.day}`;
+  const utcWeekday = new Date(`${date}T12:00:00Z`).getUTCDay();
+  return { date, hour, minute, totalMinutes: hour * 60 + minute, isoWeekday: utcWeekday === 0 ? 7 : utcWeekday };
+}
+
+export function vietnamWeekRange(now = new Date()): { start: string; end: string } {
+  const local = vietnamNow(now);
+  const current = new Date(`${local.date}T12:00:00Z`);
+  const start = new Date(current);
+  start.setUTCDate(current.getUTCDate() - (local.isoWeekday - 1));
+  const end = new Date(start);
+  end.setUTCDate(start.getUTCDate() + 6);
+  return { start: start.toISOString().slice(0, 10), end: end.toISOString().slice(0, 10) };
+}
+
+export function isWeeklySummaryWindow(now = new Date(), expectedDate?: string): boolean {
+  const local = vietnamNow(now);
+  return (!expectedDate || local.date === expectedDate)
+    && local.isoWeekday === 7
+    && local.totalMinutes >= WEEKLY_SUMMARY_START_MINUTES
+    && local.totalMinutes < QUIET_START_MINUTES;
 }
 
 export function isDeliveryWindow(now = new Date(), expectedDate?: string): boolean {
@@ -52,6 +74,7 @@ export function isNotificationDeliveryWindow(notificationType: string, expectedD
   const local = vietnamNow(now);
   if (local.date !== expectedDate) return false;
   if (notificationType === "daily_lesson") return isDailyReminderWindow(now, expectedDate);
+  if (notificationType === "weekly_vocabulary") return isWeeklySummaryWindow(now, expectedDate);
   if (notificationType.startsWith("micro_")) {
     const slot = currentMicroSlot(now);
     return slot !== null && notificationType === `micro_${slot.replace(":", "")}`;

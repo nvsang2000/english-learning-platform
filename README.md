@@ -2,16 +2,21 @@
 
 Nền tảng lưu lộ trình học tiếng Anh theo từng Telegram ID và gửi bài học hằng ngày.
 
+Hướng dẫn sao lưu và chuyển nguyên hệ thống sang server khác: [SERVER_MIGRATION_GUIDE.md](./SERVER_MIGRATION_GUIDE.md).
+
 ## Thành phần
 
 - PostgreSQL riêng: hồ sơ học viên, lộ trình, bài hằng ngày, điểm và lỗi cần cải thiện.
 - RabbitMQ riêng: hàng đợi thông báo; không chứa token Telegram.
 - Plugin OpenClaw `english-learning`: cung cấp sáu công cụ học tập đã giới hạn theo danh tính Telegram đáng tin cậy của lượt chat, gồm cả lưu kết quả mini-game.
 - Worker: tạo thông báo đến hạn và gọi `openclaw message send`.
-- Telegram `/start`: hiện ngay hai hướng `Tiếng Anh giao tiếp` và `Tiếng Anh ôn thi`; mỗi hướng dẫn tới các curriculum riêng.
+- Telegram `/start`: cho từng người tự chọn cách Bé 3 gọi là `anh`, `chị` hoặc `bạn`, sau đó mới chọn hướng giao tiếp/ôn thi; lựa chọn được lưu riêng theo Telegram ID và có thể đổi lại bằng `/start`.
 - Menu Telegram `/hoc`: các nút tạo/đổi lộ trình, bài hôm nay, nhập nội dung luyện tập, mini-game, tiến độ và phát âm; callback không chứa Telegram ID.
-- TTS Microsoft: tự tạo voice message khi phản hồi có nội dung tiếng Anh dành cho người học; chỉ đọc phần tiếng Anh, mặc định giọng Mỹ.
+- TTS Microsoft: tự tạo file MP3 khi phản hồi có câu tiếng Anh cần người học nghe/đọc theo; chỉ đọc phần cần luyện, mặc định giọng Mỹ chậm và có khoảng nghỉ tại chỗ trống.
 - Scheduler: nhắc bài chính lúc 07:00 và tùy chọn micro-learning mỗi 30 phút trong khung 07:30–22:00 giờ Việt Nam; không gửi ban đêm.
+- Kho 214 từ/cụm từ B1 theo chủ đề học tập, công việc, du lịch, giao tiếp, sức khỏe và đời sống; mỗi Telegram user có lịch sử riêng để không nhận trùng từ.
+- Tối Chủ nhật lúc 22:15 giờ Việt Nam, bot gửi tổng kết những từ đã học thành công trong tuần cho từng user.
+- Persona Bé 3: tự xưng `em`/`Bé 3`, dễ thương và hài hước nhẹ nhàng; lời nhắc 07:00 thay đổi theo ngày, hỏi thăm việc học và dùng đúng cách xưng hô đã chọn.
 - Antigravity gateway: chuyển Antigravity CLI thành endpoint OpenAI-compatible nội bộ, có hỗ trợ `tool_calls` để plugin vẫn lưu được lộ trình và điểm.
 
 Các cổng dịch vụ chỉ bind vào `127.0.0.1`: PostgreSQL `55432`, AMQP `5673`, RabbitMQ Management `15673`.
