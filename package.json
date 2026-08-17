@@ -1,6 +1,6 @@
 {
   "name": "openclaw-english-learning",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "private": true,
   "type": "module",
   "files": [
@@ -14,7 +14,10 @@
     "test": "npm run build && node --test tests/*.test.mjs",
     "antigravity-gateway": "node dist/antigravity-gateway.js",
     "smoke:antigravity": "npm run build && node scripts/smoke-antigravity-gateway.mjs",
+    "migrate": "node dist/migrate.js",
     "seed": "node dist/seed.js",
+    "curriculum:ingest": "node dist/curriculum-ingest.js",
+    "curriculum:schema": "node dist/curriculum-ingest.js --schema-only",
     "worker": "node dist/worker.js"
   },
   "dependencies": {

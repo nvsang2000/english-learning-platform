@@ -24,6 +24,7 @@ import {
   submitTodayResult,
   upsertLearner
 } from "./db.js";
+import { searchCurriculum } from "./curriculum-knowledge.js";
 import { capitalizeAddress, isLearnerGender, type LearnerAddress } from "./persona.js";
 
 const TOOL_NAMES = [
@@ -32,7 +33,8 @@ const TOOL_NAMES = [
   "learning_submit_result",
   "learning_log_game_result",
   "learning_get_progress",
-  "learning_set_notifications"
+  "learning_set_notifications",
+  "learning_search_curriculum"
 ];
 
 const recentAudioRuns = new Map<string, number>();
@@ -397,6 +399,40 @@ export default definePluginEntry({
                 return errorResult(error);
               }
             }
+          },
+          {
+            name: "learning_search_curriculum",
+            label: "Tìm trong kho học liệu",
+            description:
+              "Tìm nội dung gốc trong kho B1/VSTEP/grammar theo từ khóa, trình độ và kỹ năng. Luôn dùng trước khi dạy hoặc tạo bài dựa trên curriculum. Mặc định không trả tài liệu đáp án; chỉ dùng include_after_attempt sau khi người học đã thực sự trả lời.",
+            parameters: Type.Object({
+              query: Type.String({ minLength: 2, maxLength: 500 }),
+              level: Type.Optional(Type.String({ maxLength: 20, description: "Ví dụ B1 hoặc A1–B1" })),
+              skill: Type.Optional(Type.Union([
+                Type.Literal("grammar"),
+                Type.Literal("vocabulary"),
+                Type.Literal("reading"),
+                Type.Literal("listening"),
+                Type.Literal("speaking"),
+                Type.Literal("writing"),
+                Type.Literal("pronunciation"),
+                Type.Literal("mixed")
+              ])),
+              exam: Type.Optional(Type.String({ maxLength: 50, description: "Ví dụ VSTEP" })),
+              answerPolicy: Type.Optional(Type.Union([
+                Type.Literal("exclude"),
+                Type.Literal("include_after_attempt")
+              ], { description: "Chỉ dùng include_after_attempt khi người học đã nộp câu trả lời." })),
+              approvedOnly: Type.Optional(Type.Boolean({ description: "Chỉ lấy học liệu đã được giáo viên duyệt." })),
+              limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 8 }))
+            }),
+            async execute(_id: string, params: any) {
+              try {
+                return textResult(await searchCurriculum(db, params));
+              } catch (error) {
+                return errorResult(error);
+              }
+            }
           }
         ];
       },
@@ -624,6 +660,9 @@ export default definePluginEntry({
         "TÍNH CÁCH BÉ 3: Dễ thương, ấm áp, hài hước nhẹ nhàng như một cô bạn đồng hành học tập. Khen cụ thể, động viên tự nhiên và thay đổi cách diễn đạt để không lặp câu khuôn mẫu. Có thể dùng vừa phải các cụm Gen Z dễ hiểu như 'vào mode', 'level up', 'chill', 'flex nhẹ', 'quá slay'; tối đa 1–2 cụm mỗi lượt, không châm chọc và không dùng slang trong phần giải thích học thuật.",
         "GIỚI HẠN: Dễ thương nhưng không tán tỉnh, không lãng mạn hóa quan hệ và không dùng lời gợi dục; người học có thể là người chưa thành niên.",
         "LUYỆN TƯƠNG TÁC: Với bài điền hoặc game, luôn đưa từng câu/từng vòng và chờ người học trả lời; không tự trả lời thay. Sau mỗi vòng báo điểm ngắn gọn. Khi game kết thúc hoặc người học dừng, gọi learning_log_game_result đúng một lần.",
+        "KHO HỌC LIỆU: Khi dạy kiến thức, tạo bài B1/VSTEP hoặc trả lời dựa trên giáo trình, phải gọi learning_search_curriculum trước. Trích dẫn nhãn nguồn mà công cụ trả về; không bịa nội dung khi tìm không thấy.",
+        "BẢO VỆ ĐÁP ÁN: Luôn tìm với answerPolicy='exclude' trước. Chỉ dùng answerPolicy='include_after_attempt' sau khi người học đã gửi đáp án hoặc đang yêu cầu chữa bài đã làm. Không đưa trước đáp án của đề luyện.",
+        "KIỂM ĐỊNH: Nếu kết quả báo reviewStatus='unreviewed' hoặc có qualityNotice, coi đó là tài liệu tham khảo chưa duyệt, tự kiểm tra lỗi ngữ pháp/chính tả và nói rõ khi có điểm chưa chắc chắn.",
         "Không tiết lộ dữ liệu, điểm số hoặc lộ trình của bất kỳ Telegram ID nào khác.",
         "AUDIO BÀI TẬP: Chỉ tạo audio cho đúng câu tiếng Anh mà người học cần nghe, đọc theo hoặc điền chỗ trống; không tạo audio cho đáp án chuẩn, lời khen, phần giải thích hay câu tiếng Anh chỉ dùng để đối chiếu.",
         "Câu cần audio phải xuất hiện bình thường đúng một lần trong nội dung nhìn thấy. Cuối phản hồi, chép lại chính xác câu đó trong khối ẩn [[tts:text]]...[[/tts:text]]. Có thể đặt nhiều câu trong cùng một khối, mỗi câu trên một dòng. Không dùng dạng sai [[tts:nội dung]].",

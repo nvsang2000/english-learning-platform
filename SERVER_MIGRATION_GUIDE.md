@@ -39,9 +39,9 @@ Tất cả cổng dịch vụ chỉ nghe trên `127.0.0.1`; không cần và kh�
 | Antigravity CLI `agy` | 1.1.13 |
 | Docker Engine | 29.1.3 |
 | Docker Compose | 5.0.0 |
-| PostgreSQL container | 17-alpine |
+| PostgreSQL container | pgvector/pgvector 0.8.6-pg17 |
 | RabbitMQ container | 4-management-alpine |
-| English Learning plugin | 1.4.0 |
+| English Learning plugin | 1.5.0 |
 
 Khi chuyển máy, nên cài đúng các phiên bản này trước. Chỉ nâng phiên bản sau khi việc chuyển máy đã hoàn tất và có backup riêng.
 
@@ -218,7 +218,7 @@ Kiểm tra dump đọc được:
 pg_restore --list "$MIGRATION_DIR/english-learning-postgres.dump" >/dev/null
 ```
 
-Dump này chứa học viên, cách xưng hô, lộ trình, lịch sử từ vựng, điểm, bài học và notification outbox.
+Dump này chứa học viên, cách xưng hô, lộ trình, lịch sử từ vựng, điểm, bài học, notification outbox và chỉ mục kho học liệu curriculum.
 
 ### 4.5 Backup code và env
 

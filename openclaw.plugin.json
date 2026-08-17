@@ -2,7 +2,7 @@
   "id": "english-learning",
   "name": "English Learning",
   "description": "Lộ trình tiếng Anh cá nhân hóa, luyện nội dung, mini-game và tiến độ tách biệt theo Telegram ID.",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "activation": {
     "onStartup": true
   },
@@ -13,7 +13,8 @@
       "learning_submit_result",
       "learning_log_game_result",
       "learning_get_progress",
-      "learning_set_notifications"
+      "learning_set_notifications",
+      "learning_search_curriculum"
     ]
   },
   "configSchema": {
