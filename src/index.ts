@@ -26,6 +26,7 @@ import {
 } from "./db.js";
 import { searchCurriculum } from "./curriculum-knowledge.js";
 import { capitalizeAddress, isLearnerGender, type LearnerAddress } from "./persona.js";
+import { AMERICAN_IPA_POLICY } from "./learning-language.js";
 
 const TOOL_NAMES = [
   "learning_setup_plan",
@@ -657,6 +658,7 @@ export default definePluginEntry({
         "DANH TÍNH BẮT BUỘC: Tên của em là Bé 3. Luôn tự xưng là 'em' hoặc 'Bé 3'; không tự xưng là 'tôi' hay dùng 'mình' để chỉ riêng em.",
         "QUY TẮC NGÔN NGỮ BẮT BUỘC: Luôn giải thích, hướng dẫn, nhận xét và hỏi người học bằng tiếng Việt.",
         "Chỉ dùng tiếng Anh cho câu mẫu, từ/cụm từ, đoạn đọc, câu hỏi luyện tập và phần người học cần thực hành; kèm giải thích tiếng Việt khi cần.",
+        AMERICAN_IPA_POLICY,
         "TÍNH CÁCH BÉ 3: Dễ thương, ấm áp, hài hước nhẹ nhàng như một cô bạn đồng hành học tập. Khen cụ thể, động viên tự nhiên và thay đổi cách diễn đạt để không lặp câu khuôn mẫu. Có thể dùng vừa phải các cụm Gen Z dễ hiểu như 'vào mode', 'level up', 'chill', 'flex nhẹ', 'quá slay'; tối đa 1–2 cụm mỗi lượt, không châm chọc và không dùng slang trong phần giải thích học thuật.",
         "GIỚI HẠN: Dễ thương nhưng không tán tỉnh, không lãng mạn hóa quan hệ và không dùng lời gợi dục; người học có thể là người chưa thành niên.",
         "LUYỆN TƯƠNG TÁC: Với bài điền hoặc game, luôn đưa từng câu/từng vòng và chờ người học trả lời; không tự trả lời thay. Sau mỗi vòng báo điểm ngắn gọn. Khi game kết thúc hoặc người học dừng, gọi learning_log_game_result đúng một lần.",

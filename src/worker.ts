@@ -6,7 +6,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { deliberateSpeechSegments, synthesizeLearningAudio, vocabularyAudioFileName } from "./audio.js";
 import { databasePool, ensureTodayLesson } from "./db.js";
-import { addressForGender, capitalizeAddress, morningCheckIn } from "./persona.js";
+import { addressForGender, morningCheckIn } from "./persona.js";
 import {
   currentMicroSlot,
   DAILY_REMINDER_MINUTES,
@@ -16,7 +16,7 @@ import {
   vietnamNow,
   vietnamWeekRange
 } from "./schedule.js";
-import { preferredVocabularyCategories, weeklyVocabularySummaryText } from "./vocabulary.js";
+import { microLearningText, preferredVocabularyCategories, weeklyVocabularySummaryText } from "./vocabulary.js";
 
 const execFileAsync = promisify(execFile);
 function requireEnv(name: string): string {
@@ -50,22 +50,6 @@ function notificationText(lesson: any, gender: unknown, seed: string): string {
     ...objectives.map((item: string) => `• ${item}`),
     "",
     `Nhắn “Học bài hôm nay” để bắt đầu. Bé 3 sẽ đi cùng ${address} từng bước, học chill mà vẫn level up nhé.`
-  ].join("\n");
-}
-
-function microText(item: any, slot: string, gender: unknown): string {
-  const address = addressForGender(gender);
-  return [
-    `🌱 Micro-learning · ${slot}`,
-    "",
-    `🔤 ${item.english_text}`,
-    `🗣 IPA (Mỹ): ${item.phonetic_text}`,
-    `🇻🇳 ${item.vietnamese_meaning}`,
-    "",
-    `Ví dụ: ${item.example_en}`,
-    `Nghĩa: ${item.example_vi}`,
-    "",
-    `🔊 ${capitalizeAddress(address)} nghe audio, nhắc lại 3 lần rồi tự đặt một câu mới nha. Bé 3 chờ câu của ${address}!`
   ].join("\n");
 }
 
@@ -133,7 +117,7 @@ async function createMicroLearningOutbox(now = new Date()): Promise<number> {
       const preferredCategories = preferredVocabularyCategories(learner.course_slug);
       const itemResult = await client.query(
         `SELECT i.id, i.item_key, i.english_text, i.phonetic_text, i.vietnamese_meaning,
-                i.example_en, i.example_vi, i.category
+                i.example_en, i.example_phonetic_text, i.example_vi, i.category
            FROM micro_learning_items i
           WHERE i.active = true
             AND NOT EXISTS (
@@ -153,7 +137,7 @@ async function createMicroLearningOutbox(now = new Date()): Promise<number> {
       }
 
       const payload = {
-        text: microText(item, slot, learner.gender_identity),
+        text: microLearningText(item, slot, addressForGender(learner.gender_identity)),
         speechText: `${item.english_text}. ${item.example_en}`,
         speechSegments: [item.english_text, item.example_en],
         audioFileName: vocabularyAudioFileName(item.english_text),

@@ -1,6 +1,7 @@
 import { Pool } from "pg";
 import { ADDITIONAL_B1_VOCABULARY, type VocabularySeedItem } from "./b1-vocabulary.js";
 import { COURSE_DEFINITIONS } from "./curriculum.js";
+import { EXAMPLE_AMERICAN_IPA } from "./example-ipa.js";
 
 const databaseUrl = process.env.ENGLISH_LEARNING_DATABASE_URL;
 if (!databaseUrl) throw new Error("Thiếu ENGLISH_LEARNING_DATABASE_URL");
@@ -99,20 +100,24 @@ try {
   ];
   microItems.push(...ADDITIONAL_B1_VOCABULARY);
   for (const item of microItems) {
+    const examplePhoneticText = EXAMPLE_AMERICAN_IPA[item[0]];
+    if (!examplePhoneticText) throw new Error(`Thiếu IPA câu ví dụ cho ${item[0]}`);
     await pool.query(
       `INSERT INTO micro_learning_items
-         (item_key, min_level, english_text, phonetic_text, vietnamese_meaning, example_en, example_vi, category)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+         (item_key, min_level, english_text, phonetic_text, vietnamese_meaning,
+          example_en, example_phonetic_text, example_vi, category)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
        ON CONFLICT (item_key) DO UPDATE SET
          min_level = EXCLUDED.min_level,
          english_text = EXCLUDED.english_text,
          phonetic_text = EXCLUDED.phonetic_text,
          vietnamese_meaning = EXCLUDED.vietnamese_meaning,
          example_en = EXCLUDED.example_en,
+         example_phonetic_text = EXCLUDED.example_phonetic_text,
          example_vi = EXCLUDED.example_vi,
          category = EXCLUDED.category,
          active = true`,
-      [...item, vocabularyCategory(item[0])]
+      [...item.slice(0, 6), examplePhoneticText, item[6], vocabularyCategory(item[0])]
     );
   }
   console.log(`Đã seed ${COURSE_DEFINITIONS.length} lộ trình và ${microItems.length} mục micro-learning.`);

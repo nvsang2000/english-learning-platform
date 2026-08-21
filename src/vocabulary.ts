@@ -5,6 +5,15 @@ export type VocabularySummaryItem = {
   category: string;
 };
 
+export type MicroLearningItem = {
+  english_text: string;
+  phonetic_text: string;
+  vietnamese_meaning: string;
+  example_en: string;
+  example_phonetic_text: string;
+  example_vi: string;
+};
+
 const categoryLabels: Record<string, string> = {
   "b1-core": "B1 cốt lõi",
   "daily-life": "Đời sống",
@@ -21,6 +30,27 @@ export function preferredVocabularyCategories(courseSlug?: string | null): strin
   if (courseSlug === "foundation" || courseSlug === "conversation") return ["daily-life", "social", "b1-core", "travel"];
   if (courseSlug === "b1") return ["b1-core", "study", "daily-life", "social"];
   return ["b1-core", "study", "work", "daily-life"];
+}
+
+export function microLearningText(
+  item: MicroLearningItem,
+  slot: string,
+  address = "bạn"
+): string {
+  const capitalizedAddress = address.charAt(0).toLocaleUpperCase("vi") + address.slice(1);
+  return [
+    `🌱 Micro-learning · ${slot}`,
+    "",
+    `🔤 ${item.english_text}`,
+    `🗣 IPA (Mỹ): ${item.phonetic_text}`,
+    `🇻🇳 ${item.vietnamese_meaning}`,
+    "",
+    `Ví dụ: ${item.example_en}`,
+    `🗣 IPA câu (Mỹ): ${item.example_phonetic_text}`,
+    `Nghĩa: ${item.example_vi}`,
+    "",
+    `🔊 ${capitalizedAddress} nghe audio, nhắc lại 3 lần rồi tự đặt một câu mới nha. Bé 3 chờ câu của ${address}!`
+  ].join("\n");
 }
 
 function displayDate(value: string): string {

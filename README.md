@@ -14,7 +14,8 @@ Hướng dẫn sao lưu và chuyển nguyên hệ thống sang server khác: [SE
 - Menu Telegram `/hoc`: các nút tạo/đổi lộ trình, bài hôm nay, nhập nội dung luyện tập, mini-game, tiến độ và phát âm; callback không chứa Telegram ID.
 - TTS Microsoft: tự tạo file MP3 khi phản hồi có câu tiếng Anh cần người học nghe/đọc theo; chỉ đọc phần cần luyện, mặc định giọng Mỹ chậm và có khoảng nghỉ tại chỗ trống.
 - Scheduler: nhắc bài chính lúc 07:00 và tùy chọn micro-learning mỗi 30 phút trong khung 07:30–22:00 giờ Việt Nam; không gửi ban đêm.
-- Kho 214 từ/cụm từ B1 theo chủ đề học tập, công việc, du lịch, giao tiếp, sức khỏe và đời sống; mỗi Telegram user có lịch sử riêng để không nhận trùng từ.
+- Kho 214 từ/cụm từ B1 theo chủ đề học tập, công việc, du lịch, giao tiếp, sức khỏe và đời sống; mỗi mục có IPA Mỹ cho cả từ/cụm từ lẫn câu ví dụ, và mỗi Telegram user có lịch sử riêng để không nhận trùng từ.
+- Mọi câu tiếng Anh Bé 3 tạo để dạy, làm ví dụ, sửa bài hoặc ra bài tập đều đi kèm IPA Mỹ ngay bên dưới; câu điền chỗ trống vẫn giữ chỗ trống trong IPA để không lộ đáp án.
 - Tối Chủ nhật lúc 22:15 giờ Việt Nam, bot gửi tổng kết những từ đã học thành công trong tuần cho từng user.
 - Persona Bé 3: tự xưng `em`/`Bé 3`, dễ thương và hài hước nhẹ nhàng; lời nhắc 07:00 thay đổi theo ngày, hỏi thăm việc học và dùng đúng cách xưng hô đã chọn.
 - Antigravity gateway: chuyển Antigravity CLI thành endpoint OpenAI-compatible nội bộ, có hỗ trợ `tool_calls` để plugin vẫn lưu được lộ trình và điểm.
